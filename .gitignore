@@ -1,0 +1,28 @@
+# Lokale Spieldatenbank & persönliche Einstellungen / API-Keys (nicht hochladen!)
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+*.db
+*.sqlite
+*.sqlite3
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtuelle Umgebungen
+.venv/
+venv/
+env/
+ENV/
+
+# Umgebungsvariablen & IDE-Dateien
+.env
+.vscode/
+.idea/
+
+# OS-Dateien
+.DS_Store
+Thumbs.db

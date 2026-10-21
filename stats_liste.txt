@@ -1,0 +1,65 @@
+# LeagueTracker - Kuratierte Liste der Zeitverlaufs-Statistiken (39 Trend-Metriken)
+# Alle spielzeitabhängigen Werte sind auf "pro Minute", "Team-Anteil in %" oder
+# feste Zeitpunkte in der Laning-Phase (@10 / @15 Min.) normiert, damit die
+# Spieldauer deine Fortschrittskurve über viele Spiele nicht verfälscht.
+
+[1. Gesamt-Scores (0-100 Index) & Erfolg]
+- Kampf-Score / Fighting Index 0-100 (score_fighting: KDA, KP%, DPM, Solo-Kills)
+- Farm-Score / Farming Index 0-100 (score_farming: CS/Min, GPM, CS@10, Gold-Diff@15)
+- Sicht-Score / Vision Index 0-100 (score_vision: Vision/Min, Control Wards, Cleared Wards)
+- Aggressivitäts-Score / Aggressiveness Index 0-100 (score_aggressiveness: Solo-Kills, First Blood, Gold/XP-Diff@15, Turret Plates)
+- Objective-Score / Objectives Index 0-100 (score_objectives: Objective-DPM, Turret-DPM, Monster-Takedowns)
+- Siegesrate / Winrate % (winrate: Anteil gewonnener Spiele im Block/Fenster)
+- Durchschnittliche Spieldauer in Minuten (game_duration_min: info.gameDuration / 60)
+
+[2. Kampf, KDA & Kills]
+- KDA-Ratio (kda: (kills + assists) / max(1, deaths))
+- Kill-Beteiligung / Kill Participation % (kill_participation: challenges.killParticipation * 100)
+- Kills pro Spiel (kills_per_game: kills)
+- Tode / Deaths pro Spiel [Invertiert: niedriger = besser] (deaths_per_game: deaths)
+- Assists pro Spiel (assists_per_game: assists)
+- Solo Kills pro Spiel (solo_kills: challenges.soloKills)
+- First Blood Beteiligung % (first_blood_rate: firstBloodKill OR firstBloodAssist)
+
+[3. Schaden, Tankiness & Utility (Normiert auf pro Minute / %-Anteil)]
+- Schaden an Champions pro Minute / DPM (dpm: challenges.damagePerMinute)
+- Schadensanteil im Team % (damage_share: challenges.teamDamagePercentage * 100)
+- Schaden pro Gold / Gold-Effizienz (damage_per_gold: totalDamageDealtToChampions / goldEarned)
+- Erlittener Schaden pro Minute (damage_taken_per_min: totalDamageTaken / Spieldauer)
+- Anteil am erlittenen Schaden des Teams % (damage_taken_share: challenges.damageTakenOnTeamPercentage * 100)
+- Abgewehrter Schaden / Self-Mitigated pro Minute (self_mitigated_per_min: damageSelfMitigated / Spieldauer)
+- Heilung & Schilde für Verbündete pro Minute (ally_heal_shield_per_min: (totalHealsOnTeammates + totalDamageShieldedOnTeammates) / Spieldauer)
+- Crowd Control Zeit an Gegnern in Sek./Min. (cc_per_min: timeCCingOthers / Spieldauer)
+
+[4. Farm (CS), Gold & Laning-Phase (@10 / @15 Min.)]
+- CS pro Minute (cs_per_min: (totalMinionsKilled + neutralMinionsKilled) / Spieldauer)
+- CS bei Minute 10 (cs_at_10: challenges.laneMinionsFirst10Minutes + challenges.jungleCsBefore10Minutes)
+- Gold pro Minute / GPM (gpm: challenges.goldPerMinute)
+- Gold-Differenz zum Lane-Gegner @15 Min. (gold_diff_15: Timeline Frame 15 totalGold Differenz)
+- CS-Differenz zum Lane-Gegner @15 Min. (cs_diff_15: Timeline Frame 15 minionsKilled Differenz)
+- XP-Differenz zum Lane-Gegner @15 Min. (xp_diff_15: Timeline Frame 15 xp Differenz)
+- Zerstörte Turm-Platten / Turret Plates (turret_plates: challenges.turretPlatesTaken)
+- Gegnerische Jungle-Monster / Counter-Jungling pro Spiel (counter_jungle_cs: challenges.enemyJungleMonsterKills)
+
+[5. Sicht (Vision & Warding)]
+- Vision Score pro Minute (vision_score_per_min: challenges.visionScorePerMinute)
+- Vision-Vorteil gegenüber Lane-Gegner % (vision_diff_opponent: challenges.visionScoreAdvantageLaneOpponent * 100)
+- Platzierte Wards pro 10 Minuten (wards_placed_per_10m: wardsPlaced / Spieldauer * 10)
+- Zerstörte Wards vor Minute 20 (wards_cleared_before_20: challenges.wardTakedownsBefore20M)
+- Gekaufte Control Wards / Pink Wards pro Spiel (control_wards_bought: visionWardsBoughtInGame)
+
+[6. Objectives & Map-Kontrolle]
+- Schaden an Türmen pro Minute (turret_damage_per_min: damageDealtToTurrets / Spieldauer)
+- Schaden an Objectives wie Drachen/Baron pro Minute (objective_damage_per_min: damageDealtToObjectives / Spieldauer)
+- First Tower Beteiligung % (first_tower_rate: firstTowerKill OR firstTowerAssist)
+- Epische Monster-Beteiligungen pro Spiel (epic_monster_takedowns: Drachen + Heralds + Voidgrubs + Barons)
+
+# -----------------------------------------------------------------------------
+# HINWEIS: Nicht als Zeitverlaufs-Graph dargestellte Stats:
+# - Pentagramm (Radar-Chart): Wurde in die 5 Index-Scores (Kategorie 1) umgewandelt,
+#   damit jede Kategorie als eigene Kurve über die Zeit verfolgt werden kann.
+# - Rohwerte (Gesamtschaden, Gesamt-CS, Gesamt-Gold): Durch Pro-Minute-Werte ersetzt,
+#   um Verzerrungen durch unterschiedlich lange Spiele (20 Min vs. 45 Min) zu verhindern.
+# - Kategorische Daten (Items, Runen, Summoner Spells, Skill-Order, Matchups):
+#   Besitzen keine numerische Y-Achse für Fortschrittskurven.
+# - Rolle & Team-Seite (Blau/Rot): Dienen in der Web-App als globale Filter.

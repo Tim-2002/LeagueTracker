@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LeagueTracker – Dein Fortschritts- & Zeitverlaufs-Tracker</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <!-- Top Sticky Header & Control Bar -->
+    <header class="top-header">
+        <div class="header-main">
+            <div class="brand">
+                <div class="brand-logo">📈</div>
+                <div>
+                    <h1>LeagueTracker</h1>
+                    <span class="brand-subtitle">Persönliche Entwicklung & Trend-Analyse über Zeit</span>
+                </div>
+            </div>
+
+            <div class="controls-bar">
+                <!-- Player Filter -->
+                <div class="control-group">
+                    <label for="filter-player">👤 Spieler (Account)</label>
+                    <select id="filter-player" class="select-input player-select">
+                        <option value="ALL">Lade Spieler...</option>
+                    </select>
+                </div>
+
+                <!-- Champion Filter -->
+                <div class="control-group">
+                    <label for="filter-champion">Champion</label>
+                    <select id="filter-champion" class="select-input">
+                        <option value="ALL">Alle Champions</option>
+                    </select>
+                </div>
+
+                <!-- Role Filter -->
+                <div class="control-group">
+                    <label for="filter-role">Rolle / Lane</label>
+                    <select id="filter-role" class="select-input">
+                        <option value="ALL">Alle Rollen</option>
+                        <option value="MIDDLE">Midlane</option>
+                        <option value="BOTTOM">Botlane (ADC)</option>
+                        <option value="JUNGLE">Jungle</option>
+                        <option value="TOP">Toplane</option>
+                        <option value="UTILITY">Support</option>
+                    </select>
+                </div>
+
+                <!-- Queue Filter -->
+                <div class="control-group">
+                    <label for="filter-queue">Queue</label>
+                    <select id="filter-queue" class="select-input">
+                        <option value="ALL">Alle Queues</option>
+                        <option value="420">Ranked Solo/Duo</option>
+                        <option value="440">Ranked Flex</option>
+                        <option value="400">Normal Draft</option>
+                        <option value="450">ARAM</option>
+                    </select>
+                </div>
+
+                <!-- Game Range / Timeframe Mode & Controls -->
+                <div class="control-group range-filter-group">
+                    <div class="range-label-row">
+                        <label>Angezeigte Spiele</label>
+                        <span class="selection-count-badge" id="active-selection-badge" title="Anzahl der Spiele in deiner aktuellen Auswahl">
+                            Lade...
+                        </span>
+                        <div class="mini-segmented" id="range-mode-control">
+                            <button type="button" data-rmode="count" class="mini-seg-btn active" title="Letzte N Spiele passend zu Champion, Rolle & Queue anzeigen">
+                                Anzahl Spiele
+                            </button>
+                            <button type="button" data-rmode="date" class="mini-seg-btn" title="Spiele nach Datum (Von – Bis, standardmäßig bis heute) filtern">
+                                Datum (Von–Bis)
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Mode 1: By Game Count (matching current filter) -->
+                    <div class="range-subpanel" id="range-count-panel">
+                        <div class="segmented-control" id="limit-preset-control">
+                            <button type="button" data-limit="" class="seg-btn active" title="Alle passenden Spiele anzeigen">Alle</button>
+                            <button type="button" data-limit="25" class="seg-btn" title="Die letzten 25 passenden Spiele">25</button>
+                            <button type="button" data-limit="50" class="seg-btn" title="Die letzten 50 passenden Spiele">50</button>
+                            <button type="button" data-limit="100" class="seg-btn" title="Die letzten 100 passenden Spiele">100</button>
+                        </div>
+                        <input
+                            type="number"
+                            id="filter-limit-games"
+                            class="number-input-compact"
+                            min="1"
+                            max="5000"
+                            step="1"
+                            placeholder="Anzahl..."
+                            title="Eigene Anzahl an passenden Spielen eingeben (z.B. 100)"
+                        />
+                    </div>
+
+                    <!-- Mode 2: By Date From - To (defaults to present) -->
+                    <div class="range-subpanel hidden" id="range-date-panel">
+                        <input type="date" id="filter-date-from" class="date-input" title="Startdatum (Von)" />
+                        <span class="date-sep">bis</span>
+                        <input type="date" id="filter-date-to" class="date-input" title="Enddatum (Bis – Standard: Gegenwart)" />
+                        <button type="button" id="btn-date-reset" class="btn-small" title="Zeitraum auf Alle bis Heute zurücksetzen">
+                            Bis Heute
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Grouping Size (1, 5, 10, 20 Games) -->
+                <div class="control-group">
+                    <label>Spiele pro Datenpunkt</label>
+                    <div class="segmented-control" id="group-size-control">
+                        <button type="button" data-size="1" class="seg-btn">1</button>
+                        <button type="button" data-size="5" class="seg-btn active">5</button>
+                        <button type="button" data-size="10" class="seg-btn">10</button>
+                        <button type="button" data-size="20" class="seg-btn">20</button>
+                    </div>
+                </div>
+
+                <!-- Aggregation Mode (Fixed Blocks vs Rolling Average) -->
+                <div class="control-group">
+                    <label>Aggregations-Modus</label>
+                    <div class="segmented-control" id="group-mode-control">
+                        <button type="button" data-mode="blocks" class="seg-btn active" title="Teilt Spiele in feste Pakete à N Spiele ein (z.B. Spiel 1-5, 6-10)">
+                            Feste Blöcke
+                        </button>
+                        <button type="button" data-mode="rolling" class="seg-btn" title="Berechnet für jeden Punkt den gleitenden Schnitt der letzten N Spiele">
+                            Gleitender Schnitt
+                        </button>
+                    </div>
+                </div>
+
+                <!-- X-Axis Scale Mode (Game-spaced vs Calendar Time-spaced) -->
+                <div class="control-group">
+                    <label>X-Achse (Abstände)</label>
+                    <div class="segmented-control" id="xaxis-mode-control">
+                        <button type="button" data-xaxis="games" class="seg-btn active" title="Jedes Spiel / jeder Block hat denselben Abstand auf der X-Achse">
+                            Spiel-korrekt
+                        </button>
+                        <button type="button" data-xaxis="time" class="seg-btn" title="Echte Kalender-Zeitachse: Spielpausen und Vielspieler-Tage werden zeitgetreu dargestellt">
+                            Zeit-korrekt
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Compare & Sync Buttons -->
+                <div class="control-group action-group" style="flex-direction: row; gap: 8px;">
+                    <button type="button" id="btn-open-compare" class="btn-compare" title="Zwei Spieler unter exakt denselben Filtern (z.B. 100 MasterYi Spiele) miteinander vergleichen">
+                        ⚔️ 2 Spieler vergleichen
+                    </button>
+                    <button type="button" id="btn-open-sync" class="btn-primary">
+                        🔄 Riot Sync / Daten
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <nav class="category-tabs" id="category-tabs">
+            <!-- Dynamically populated by app.js -->
+        </nav>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="main-container">
+        <!-- Quick Insights Banner (Verbesserungen & Baustellen) -->
+        <section class="insights-banner" id="insights-banner">
+            <div class="insight-box status-box">
+                <div class="insight-title">Aktive Datenbasis</div>
+                <div class="insight-main" id="summary-matches-text">Lade Daten...</div>
+                <div class="insight-sub" id="summary-mode-text"></div>
+            </div>
+            <div class="insight-box positive-box">
+                <div class="insight-title">🚀 Größte Verbesserungen (Trend)</div>
+                <div class="insight-tags" id="top-improvements"></div>
+            </div>
+            <div class="insight-box negative-box">
+                <div class="insight-title">⚠️ Aktuelle Baustellen (Fokus)</div>
+                <div class="insight-tags" id="top-regressions"></div>
+            </div>
+        </section>
+
+        <!-- Favorites Toolbar (Visible when on Favorites Tab) -->
+        <section class="favorites-toolbar" id="favorites-toolbar">
+            <div class="fav-toolbar-left">
+                <h2>⭐ Deine persönliche Favoriten-Seite</h2>
+                <p>Stelle dir hier beliebig viele Statistiken zusammen, die du im Blick behalten möchtest. Mit <strong>◀ / ▶</strong> auf einer Karte änderst du die Reihenfolge.</p>
+            </div>
+            <div class="fav-toolbar-right">
+                <button type="button" id="btn-open-fav-picker" class="btn-secondary">
+                    ➕ Stats auswählen / verwalten (<span id="fav-count-badge">0</span>/39)
+                </button>
+            </div>
+        </section>
+
+        <!-- Charts Grid -->
+        <section class="charts-grid" id="charts-grid">
+            <!-- Stat Cards with Canvas Charts rendered here -->
+        </section>
+
+        <!-- Win vs Loss Analysis Page (Visible when on Win/Loss Tab) -->
+        <section class="winloss-view hidden" id="winloss-view">
+            <!-- Dynamically populated by app.js -->
+        </section>
+
+        <!-- 2-Player Comparison Page (Visible when on Compare Tab) -->
+        <section class="compare-view hidden" id="compare-view">
+            <!-- Dynamically populated by app.js -->
+        </section>
+    </main>
+
+    <!-- Modal 1: Favorites Picker Modal -->
+    <div class="modal-backdrop hidden" id="fav-picker-modal">
+        <div class="modal-card modal-large">
+            <div class="modal-header">
+                <h3>⭐ Favoriten-Seite zusammenstellen</h3>
+                <button type="button" class="modal-close" id="btn-close-fav-picker">✕</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-hint">
+                    Wähle beliebig viele Statistiken aus, die auf deiner Favoriten-Seite als Zeitverlaufs-Graph angezeigt werden sollen:
+                </p>
+                <div class="fav-picker-actions">
+                    <button type="button" id="btn-fav-select-default" class="btn-small">Empfohlene Standard-Auswahl (10)</button>
+                    <button type="button" id="btn-fav-select-all" class="btn-small">Alle 39 auswählen</button>
+                    <button type="button" id="btn-fav-select-none" class="btn-small">Alle abwählen</button>
+                </div>
+                <div id="fav-picker-categories" class="fav-picker-categories">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-primary" id="btn-save-fav-picker">Fertig & Schließen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal 2: Riot API Sync & Demo Data Modal -->
+    <div class="modal-backdrop hidden" id="sync-modal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>🔄 Riot Games API Sync & Datenbank</h3>
+                <button type="button" class="modal-close" id="btn-close-sync">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="sync-section">
+                    <h4>1. Spiele eines beliebigen Spielers über die Riot API laden</h4>
+                    <p class="modal-hint">
+                        Mit deinem eigenen Riot API-Key kannst du <strong>jeden beliebigen Spieler</strong> (dich selbst, Freunde oder Pro-Player) über seine Riot-ID (<code>Name#Tag</code>) abrufen. Alle Spieler werden sauber getrennt nach ihrer <code>PUUID</code> lokal in <code>data/leaguetracker.db</code> gespeichert.
+                    </p>
+                    <div id="saved-players-bar" class="saved-players-bar"></div>
+                    <form id="sync-form" class="sync-form">
+                        <div class="form-row">
+                            <div class="form-field">
+                                <label for="sync-gamename">Riot Name (ohne #Tag)</label>
+                                <input type="text" id="sync-gamename" placeholder="z.B. Faker" required />
+                            </div>
+                            <div class="form-field form-field-small">
+                                <label for="sync-tagline">Tagline</label>
+                                <input type="text" id="sync-tagline" placeholder="z.B. EUW" required />
+                            </div>
+                            <div class="form-field form-field-small">
+                                <label for="sync-region">Region</label>
+                                <select id="sync-region">
+                                    <option value="EUW1">EUW</option>
+                                    <option value="EUN1">EUNE</option>
+                                    <option value="NA1">NA</option>
+                                    <option value="KR">KR</option>
+                                    <option value="TR1">TR</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-field">
+                                <label for="sync-apikey">Riot API Key (RGAPI-...)</label>
+                                <input type="password" id="sync-apikey" placeholder="RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required />
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-field">
+                                <label for="sync-queue">Queue-Filter beim Laden (Spart enorm viel Ladezeit!)</label>
+                                <select id="sync-queue">
+                                    <option value="420" selected>Nur Ranked Solo/Duo (Queue 420)</option>
+                                    <option value="440">Nur Ranked Flex (Queue 440)</option>
+                                    <option value="400">Nur Normal Draft Pick (Queue 400)</option>
+                                    <option value="450">Nur ARAM (Queue 450)</option>
+                                    <option value="ALL">Alle Queues (Keine Vorauswahl)</option>
+                                </select>
+                            </div>
+                            <div class="form-field form-field-small">
+                                <label for="sync-count">Anzahl Spiele (frei eingebbar)</label>
+                                <input type="number" id="sync-count" min="1" max="2000" step="1" value="50" placeholder="z.B. 150" required />
+                            </div>
+                        </div>
+
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="sync-remove-demo" checked />
+                            Demo-Spiele nach erfolgreichem Import automatisch ausblenden/entfernen
+                        </label>
+
+                        <div class="sync-actions">
+                            <button type="submit" class="btn-primary" id="btn-submit-sync">
+                                🚀 Jetzt Matches von Riot synchronisieren
+                            </button>
+                        </div>
+                        <div id="sync-status-msg" class="sync-status-msg"></div>
+                    </form>
+                </div>
+
+                <hr class="modal-divider" />
+
+                <div class="sync-section">
+                    <h4>2. Demo-Modus (Zum Testen ohne API-Key)</h4>
+                    <p class="modal-hint">
+                        Erzeugt 80 realistische Matches über 60 Tage (Ahri, Orianna, Jinx, Viego) inkl. Laning-Timeline-Daten, damit du die Gruppierungen (1, 5, 10, 20 Spiele) sofort ausprobieren kannst.
+                    </p>
+                    <div class="demo-buttons">
+                        <button type="button" id="btn-reload-demo" class="btn-secondary">
+                            🎲 80 Demo-Spiele neu generieren
+                        </button>
+                        <button type="button" id="btn-clear-demo" class="btn-danger-outline">
+                            🗑️ Demo-Spiele löschen
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
