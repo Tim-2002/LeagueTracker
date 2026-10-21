@@ -250,6 +250,7 @@
                     <h4>1. Spiele eines beliebigen Spielers über die Riot API laden</h4>
                     <p class="modal-hint">
                         Mit deinem eigenen Riot API-Key kannst du <strong>jeden beliebigen Spieler</strong> (dich selbst, Freunde oder Pro-Player) über seine Riot-ID (<code>Name#Tag</code>) abrufen. Alle Spieler werden sauber getrennt nach ihrer <code>PUUID</code> lokal in <code>data/leaguetracker.db</code> gespeichert.
+                        Deinen kostenlosen Development API-Key (24h gültig) erhältst du direkt auf <a href="https://developer.riotgames.com/" target="_blank" rel="noopener noreferrer">developer.riotgames.com</a>.
                     </p>
                     <div id="saved-players-bar" class="saved-players-bar"></div>
                     <form id="sync-form" class="sync-form">
@@ -276,7 +277,10 @@
 
                         <div class="form-row">
                             <div class="form-field">
-                                <label for="sync-apikey">Riot API Key (RGAPI-...)</label>
+                                <div class="label-with-link">
+                                    <label for="sync-apikey">Riot API Key (RGAPI-...)</label>
+                                    <a href="https://developer.riotgames.com/" target="_blank" rel="noopener noreferrer" class="apikey-link">🔑 Neuen API-Key holen (developer.riotgames.com) ↗</a>
+                                </div>
                                 <input type="password" id="sync-apikey" placeholder="RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required />
                             </div>
                         </div>

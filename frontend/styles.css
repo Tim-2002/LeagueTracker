@@ -844,6 +844,27 @@ body {
     color: var(--text-muted);
 }
 
+.label-with-link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.apikey-link {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent-primary);
+    text-decoration: none;
+    transition: color 0.15s;
+}
+
+.apikey-link:hover {
+    color: #60a5fa;
+    text-decoration: underline;
+}
+
 .form-field input,
 .form-field select {
     background: var(--bg-input);
