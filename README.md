@@ -1,16 +1,16 @@
 # 📈 LeagueTracker – Persönlicher Fortschritts- & Zeitverlaufs-Tracker
 
-**LeagueTracker** ist eine lokale Web-App zur Analyse deiner persönlichen Entwicklung in **League of Legends** über die Zeit. Statt nur statische Durchschnittswerte anzuzeigen, bereitet das Tool **39 spielzeitnormierte Metriken** als interaktive Zeitverlaufs-Kurven, Sieg-vs.-Niederlage-Analysen und Direktvergleiche mit Freunden oder Pro-Playern auf.
+**LeagueTracker** ist eine lokale Web-App zur Analyse deiner persönlichen Entwicklung in **League of Legends** über die Zeit. Statt nur statische Durchschnittswerte anzuzeigen, bereitet das Tool **46 spielzeitnormierte Metriken** als interaktive Zeitverlaufs-Kurven, Sieg-vs.-Niederlage-Analysen und Direktvergleiche mit Freunden oder Pro-Playern auf.
 
 ---
 
 ## ✨ Features im Überblick
 
-- **📊 39 Normierte Trend-Statistiken in 6 Kategorien:**
-  - 🏆 **Gesamt-Scores & Erfolg:** 5 normierte Index-Scores (0–100) für *Fighting, Farming, Vision, Aggressiveness & Objectives* sowie Winrate und Spieldauer.
+- **📊 46 Normierte Trend-Statistiken in 6 Kategorien:**
+  - 🏆 **Gesamt-Scores & Erfolg:** **Rang & Liga-Punkte (LP)** von Iron bis Challenger (inkl. Live-Abruf via `League-V4`), 5 normierte Index-Scores (0–100) für *Fighting, Farming, Vision, Aggressiveness & Objectives* sowie Winrate und Spieldauer.
   - ⚔️ **Kampf, KDA & Kills:** KDA, Kill Participation %, Kills, Tode (invertiert: weniger = besser), Assists, Solo-Kills & First-Blood-Rate.
   - 💥 **Schaden, Tankiness & Utility:** DPM, Team-Schadensanteil %, Schaden pro Gold, erlittener/abgewehrter Schaden pro Minute, Heilung/Schilde & CC-Score/Min.
-  - 🪙 **Farm, Gold & Laning (@10 / @15):** CS/Min, CS@10, Gold/Min (GPM), echte Laning-Differenzen bei Minute 15 (*Gold-Diff@15, CS-Diff@15, XP-Diff@15* gegen deinen direkten Lane-Gegner aus der Match-Timeline), Turret Plates & Counter-Jungling.
+  - 🪙 **Farm, Gold & Items:** CS/Min, CS@10, Gold/Min (GPM), echte Gold-Differenzen gegen deinen direkten Lane-Gegner bei Minute 10, 15, 20 und 25 (*Gold-Diff @10/@15/@20/@25*), exakte Kaufzeitpunkte (Minute:Sekunde) für dein **1., 2. und 3. vollständiges Item**, *CS-Diff@15, XP-Diff@15*, Turret Plates & Counter-Jungling.
   - 👁️ **Sicht (Vision & Warding):** Vision Score/Min, Vision-Vorteil vs. Lane-Gegner, platzierte Wards/10m, zerstörte Wards vor Min. 20 & Control Wards.
   - 🐉 **Objectives & Map-Kontrolle:** Turmschaden/Min, Objective-Schaden/Min, First-Tower-Rate & Epische Monster-Beteiligungen.
 - **🔎 Flexible Filter & Gruppierungen:**
@@ -42,7 +42,7 @@ Stelle sicher, dass **Python 3.9 oder neuer** auf deinem PC installiert ist:
 ### 3. App starten (`start.bat`)
 Doppelklicke einfach auf **`start.bat`** im Projektordner!
 - Beim allerersten Start installiert das Skript automatisch die benötigten Python-Pakete (`fastapi`, `uvicorn`, `requests`, `pydantic`).
-- Danach startet der lokale Server und öffnet automatisch deinen Browser unter **[http://127.0.0.1:8000](http://127.0.0.1:8000)**.
+- Danach startet der lokale Server und öffnet automatisch deinen Browser unter **[http://127.0.0.1:8001](http://127.0.0.1:8001)**.
 
 *(Alternativ manuell über das Terminal starten:)*
 ```bash
@@ -77,8 +77,8 @@ LeagueTracker/
 ├── backend/
 │   ├── app.py             # FastAPI Webserver & REST-Endpunkte
 │   ├── database.py        # SQLite-Verwaltung, Zeitreihen-Aggregation & Win/Loss-Statistik
-│   ├── riot_client.py     # Riot API Client (Account-V1, Match-V5, Timeline) & Demo-Generator
-│   └── stats_config.py    # Definition aller 39 normierten Statistiken & 6 Kategorien
+│   ├── riot_client.py     # Riot API Client (Account-V1, Match-V5, Timeline, League-V4) & Demo-Generator
+│   └── stats_config.py    # Definition aller 46 normierten Statistiken & 6 Kategorien
 ├── frontend/
 │   ├── index.html         # Hauptoberfläche & Modals
 │   ├── styles.css         # Dark-Mode Gaming UI Styling
@@ -86,7 +86,7 @@ LeagueTracker/
 ├── data/                  # Lokaler Datenbank-Ordner (leaguetracker.db wird lokal erzeugt & von Git ignoriert)
 ├── requirements.txt       # Python-Abhängigkeiten
 ├── start.bat              # 1-Klick Starter für Windows (inkl. Auto-Setup)
-└── stats_liste.txt        # Übersicht aller 39 berechneten Metriken
+└── stats_liste.txt        # Übersicht aller 46 berechneten Metriken
 ```
 
 ## 🔒 Datenschutz & Lokale Speicherung

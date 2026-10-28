@@ -1,6 +1,6 @@
 """
 FastAPI Backend-Server für die LeagueTracker Web-App.
-Startet unter http://127.0.0.1:8000
+Startet unter http://127.0.0.1:8001
 """
 
 import os
@@ -33,7 +33,7 @@ from database import (
     compare_players,
     clear_demo_matches,
 )
-from riot_client import sync_riot_matches, generate_demo_matches
+from riot_client import sync_riot_matches, generate_demo_matches, ensure_all_player_ranks
 
 app = FastAPI(title="LeagueTracker - Zeitverlaufs- & Fortschritts-Tracker")
 
@@ -62,6 +62,7 @@ def on_startup() -> None:
     counts = get_match_count()
     if counts["total"] == 0:
         generate_demo_matches(80)
+    ensure_all_player_ranks()
 
 
 @app.get("/api/meta")
@@ -228,4 +229,5 @@ if __name__ == "__main__":
     init_db()
     if get_match_count()["total"] == 0:
         generate_demo_matches(80)
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    ensure_all_player_ranks()
+    uvicorn.run(app, host="127.0.0.1", port=8001)

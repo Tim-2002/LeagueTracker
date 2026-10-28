@@ -1,5 +1,5 @@
 """
-Zentrale Konfiguration aller 39 normierten Zeitverlaufs-Statistiken für LeagueTracker.
+Zentrale Konfiguration aller 46 normierten Zeitverlaufs-Statistiken für LeagueTracker.
 """
 
 from typing import List, Dict, Any
@@ -8,7 +8,7 @@ CATEGORIES: List[Dict[str, str]] = [
     {"id": "scores", "name": "Gesamt-Scores & Erfolg", "icon": "🏆"},
     {"id": "combat", "name": "Kampf, KDA & Kills", "icon": "⚔️"},
     {"id": "damage", "name": "Schaden, Tankiness & Utility", "icon": "💥"},
-    {"id": "farming", "name": "Farm, Gold & Laning (@15)", "icon": "🪙"},
+    {"id": "farming", "name": "Farm, Gold & Items", "icon": "🪙"},
     {"id": "vision", "name": "Sicht (Vision & Warding)", "icon": "👁️"},
     {"id": "objectives", "name": "Objectives & Map-Kontrolle", "icon": "🐉"},
 ]
@@ -17,6 +17,18 @@ STATS_CONFIG: List[Dict[str, Any]] = [
     # -------------------------------------------------------------------------
     # 1. Gesamt-Scores (0-100 Index) & Erfolg
     # -------------------------------------------------------------------------
+    {
+        "id": "rank_lp",
+        "name": "Rang & Liga-Punkte (LP)",
+        "category": "scores",
+        "unit": " LP",
+        "decimals": 0,
+        "format": "rank_lp",
+        "higher_is_better": True,
+        "color": "#eab308",
+        "description": "Dein Ranked-Verlauf (Tier, Division & LP) von Iron bis Challenger über die Zeit.",
+        "riot_source": "League-V4 (tier, rank, leaguePoints) + Match-V5 Win/Loss-Verlauf",
+    },
     {
         "id": "score_fighting",
         "name": "Kampf-Score (Fighting)",
@@ -269,7 +281,7 @@ STATS_CONFIG: List[Dict[str, Any]] = [
     },
 
     # -------------------------------------------------------------------------
-    # 4. Farm (CS), Gold & Laning-Phase (@10 / @15 Min.)
+    # 4. Farm (CS), Gold, Items & Laning-Phase (@10 / @15 / @20 / @25 Min.)
     # -------------------------------------------------------------------------
     {
         "id": "cs_per_min",
@@ -305,6 +317,17 @@ STATS_CONFIG: List[Dict[str, Any]] = [
         "riot_source": "challenges.goldPerMinute",
     },
     {
+        "id": "gold_diff_10",
+        "name": "Gold-Differenz @10 Min (vs. Lane)",
+        "category": "farming",
+        "unit": " G",
+        "decimals": 0,
+        "higher_is_better": True,
+        "color": "#fcd34d",
+        "description": "Dein Gold-Vorsprung (oder Rückstand) gegenüber deinem direkten Lane-Gegner bei Minute 10.",
+        "riot_source": "Timeline Frame 10: totalGold (Spieler - Lane-Gegner)",
+    },
+    {
         "id": "gold_diff_15",
         "name": "Gold-Differenz @15 Min (vs. Lane)",
         "category": "farming",
@@ -314,6 +337,64 @@ STATS_CONFIG: List[Dict[str, Any]] = [
         "color": "#fbbf24",
         "description": "Dein Gold-Vorsprung (oder Rückstand) gegenüber deinem direkten Lane-Gegner bei Minute 15.",
         "riot_source": "Timeline Frame 15: totalGold (Spieler - Lane-Gegner)",
+    },
+    {
+        "id": "gold_diff_20",
+        "name": "Gold-Differenz @20 Min (vs. Lane)",
+        "category": "farming",
+        "unit": " G",
+        "decimals": 0,
+        "higher_is_better": True,
+        "color": "#f59e0b",
+        "description": "Dein Gold-Vorsprung (oder Rückstand) gegenüber deinem direkten Lane-Gegner bei Minute 20.",
+        "riot_source": "Timeline Frame 20: totalGold (Spieler - Lane-Gegner)",
+    },
+    {
+        "id": "gold_diff_25",
+        "name": "Gold-Differenz @25 Min (vs. Lane)",
+        "category": "farming",
+        "unit": " G",
+        "decimals": 0,
+        "higher_is_better": True,
+        "color": "#d97706",
+        "description": "Dein Gold-Vorsprung (oder Rückstand) gegenüber deinem direkten Lane-Gegner bei Minute 25.",
+        "riot_source": "Timeline Frame 25: totalGold (Spieler - Lane-Gegner)",
+    },
+    {
+        "id": "item_1_time",
+        "name": "1. Item Kaufzeitpunkt (Min:Sek)",
+        "category": "farming",
+        "unit": " Min",
+        "decimals": 2,
+        "format": "mm_ss",
+        "higher_is_better": False,
+        "color": "#38bdf8",
+        "description": "Zeitpunkt (Minute:Sekunde), zu dem du dein 1. vollständiges Item gekauft hast (Früher = Besser!).",
+        "riot_source": "Timeline Events: ITEM_PURCHASED (1. fertiges Haupt-Item)",
+    },
+    {
+        "id": "item_2_time",
+        "name": "2. Item Kaufzeitpunkt (Min:Sek)",
+        "category": "farming",
+        "unit": " Min",
+        "decimals": 2,
+        "format": "mm_ss",
+        "higher_is_better": False,
+        "color": "#818cf8",
+        "description": "Zeitpunkt (Minute:Sekunde), zu dem du dein 2. vollständiges Item gekauft hast (Früher = Besser!).",
+        "riot_source": "Timeline Events: ITEM_PURCHASED (2. fertiges Haupt-Item)",
+    },
+    {
+        "id": "item_3_time",
+        "name": "3. Item Kaufzeitpunkt (Min:Sek)",
+        "category": "farming",
+        "unit": " Min",
+        "decimals": 2,
+        "format": "mm_ss",
+        "higher_is_better": False,
+        "color": "#c084fc",
+        "description": "Zeitpunkt (Minute:Sekunde), zu dem du dein 3. vollständiges Item gekauft hast (Früher = Besser!).",
+        "riot_source": "Timeline Events: ITEM_PURCHASED (3. fertiges Haupt-Item)",
     },
     {
         "id": "cs_diff_15",
@@ -471,6 +552,7 @@ STATS_CONFIG: List[Dict[str, Any]] = [
 STATS_BY_ID: Dict[str, Dict[str, Any]] = {s["id"]: s for s in STATS_CONFIG}
 
 DEFAULT_FAVORITES: List[str] = [
+    "rank_lp",
     "winrate",
     "kda",
     "cs_per_min",

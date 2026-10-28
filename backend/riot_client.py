@@ -2,14 +2,23 @@
 Riot Games API Client (Account-V1, Match-V5 & Timeline) sowie realistischer Demo-Datengenerator.
 """
 
+import json
 import math
 import random
 import time
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set, Tuple
 import urllib.parse
 import requests
 
-from database import get_connection, insert_match, clear_demo_matches, upsert_player
+from database import (
+    get_connection,
+    insert_match,
+    clear_demo_matches,
+    upsert_player,
+    update_player_rank,
+    recompute_player_match_ranks,
+    get_settings,
+)
 
 
 REGION_TO_ROUTING = {
@@ -24,6 +33,119 @@ REGION_TO_ROUTING = {
     "KR": "asia",
     "JP1": "asia",
 }
+
+# Vollständige Basis-Liste aller fertigen Legendary-/Haupt-Items (ohne Schuhe/Komponenten)
+BASE_COMPLETED_ITEM_IDS: Set[int] = {
+    2065, 2501, 2502, 2503, 2504, 2510, 2512, 2517, 2520, 2522, 2523, 2524, 2525, 2526, 2530,
+    3001, 3002, 3003, 3004, 3011, 3026, 3031, 3032, 3033, 3036, 3039, 3040, 3041, 3042, 3046,
+    3050, 3053, 3065, 3068, 3071, 3072, 3073, 3074, 3075, 3078, 3083, 3084, 3085, 3087, 3089,
+    3091, 3094, 3095, 3100, 3102, 3107, 3109, 3110, 3115, 3116, 3118, 3119, 3121, 3124, 3128,
+    3131, 3135, 3137, 3139, 3142, 3143, 3146, 3152, 3153, 3156, 3157, 3161, 3165, 3179, 3181,
+    3190, 3193, 3222, 3302, 3504, 3508, 3742, 3748, 3814, 4004, 4005, 4401, 4402, 4403, 4628,
+    4629, 4633, 4636, 4637, 4643, 4644, 4645, 4646, 6035, 6333, 6609, 6610, 6616, 6617, 6620,
+    6621, 6630, 6631, 6632, 6653, 6655, 6656, 6657, 6662, 6664, 6665, 6667, 6671, 6672, 6673,
+    6675, 6676, 6691, 6692, 6693, 6694, 6695, 6696, 6697, 6698, 6699, 6700, 6701, 8001, 8010,
+    8020,
+}
+
+# Tear-Items, die sich bei 360 Stacks automatisch transformieren, werden auf ihr Basis-Hauptitem normiert
+TEAR_TRANSFORM_MAP: Dict[int, int] = {
+    3040: 3003,  # Seraph's Embrace -> Archangel's Staff
+    3042: 3004,  # Muramana -> Manamune
+    3121: 3119,  # Fimbulwinter -> Winter's Approach
+    2530: 2526,  # Diadem of Songs -> Whispering Circlet
+}
+
+_CACHED_COMPLETED_ITEM_IDS: Optional[Set[int]] = None
+
+
+def _get_completed_item_ids() -> Set[int]:
+    """
+    Liefert die Menge aller fertigen Haupt-Items (Legendary/Full Items, ohne Schuhe & Komponenten).
+    Reichert die eingebaute Liste einmalig dynamisch über Riot Data Dragon an, falls online verfügbar.
+    """
+    global _CACHED_COMPLETED_ITEM_IDS
+    if _CACHED_COMPLETED_ITEM_IDS is not None:
+        return _CACHED_COMPLETED_ITEM_IDS
+
+    ids = set(BASE_COMPLETED_ITEM_IDS)
+    try:
+        v_resp = requests.get("https://ddragon.leagueoflegends.com/api/versions.json", timeout=4)
+        if v_resp.status_code == 200:
+            latest_ver = v_resp.json()[0]
+            i_resp = requests.get(
+                f"https://ddragon.leagueoflegends.com/cdn/{latest_ver}/data/en_US/item.json",
+                timeout=5,
+            )
+            if i_resp.status_code == 200:
+                items_data = i_resp.json().get("data", {})
+                for k, val in items_data.items():
+                    if not k.isdigit():
+                        continue
+                    total_gold = val.get("gold", {}).get("total", 0)
+                    tags = val.get("tags", []) or []
+                    if "Boots" in tags or "Consumable" in tags:
+                        continue
+                    has_from = bool(val.get("from"))
+                    into_list = val.get("into") or []
+                    has_purchasable_into = any(
+                        items_data.get(str(nxt), {}).get("gold", {}).get("purchasable", False)
+                        for nxt in into_list
+                    )
+                    if has_from and not has_purchasable_into and total_gold >= 1900:
+                        ids.add(int(k))
+    except Exception:
+        pass
+
+    _CACHED_COMPLETED_ITEM_IDS = ids
+    return ids
+
+
+def _canonical_completed_item_id(raw_item_id: int, completed_ids: Set[int]) -> Optional[int]:
+    """Prüft, ob eine Item-ID ein fertiges Haupt-Item ist, und gibt die kanonische Item-ID zurück."""
+    if raw_item_id <= 0:
+        return None
+    base_id = raw_item_id % 10000 if 320000 <= raw_item_id < 330000 else raw_item_id
+    base_id = TEAR_TRANSFORM_MAP.get(base_id, base_id)
+    if base_id in completed_ids or raw_item_id in completed_ids:
+        return base_id
+    return None
+
+
+def _extract_item_purchase_times(
+    frames: List[Dict[str, Any]], participant_id: int
+) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+    """
+    Ermittelt aus den Timeline-Events die Kaufzeitpunkte (in Minuten, auf Sekunden genau)
+    für das 1., 2. und 3. vollständige Item des Spielers (inkl. Berücksichtigung von ITEM_UNDO).
+    """
+    completed_ids = _get_completed_item_ids()
+    purchases: List[Tuple[int, int]] = []  # (canonical_item_id, timestamp_ms)
+
+    for frame in frames:
+        for ev in frame.get("events", []):
+            if ev.get("participantId") != participant_id:
+                continue
+            etype = ev.get("type")
+            if etype == "ITEM_PURCHASED":
+                raw_id = int(ev.get("itemId", 0))
+                canon_id = _canonical_completed_item_id(raw_id, completed_ids)
+                if canon_id is not None:
+                    if not any(cid == canon_id for cid, _ in purchases):
+                        purchases.append((canon_id, int(ev.get("timestamp", 0))))
+            elif etype == "ITEM_UNDO":
+                before_id = int(ev.get("beforeId", 0))
+                canon_before = _canonical_completed_item_id(before_id, completed_ids)
+                if canon_before is not None:
+                    for idx in range(len(purchases) - 1, -1, -1):
+                        if purchases[idx][0] == canon_before:
+                            purchases.pop(idx)
+                            break
+
+    t1 = round(purchases[0][1] / 60000.0, 2) if len(purchases) >= 1 else None
+    t2 = round(purchases[1][1] / 60000.0, 2) if len(purchases) >= 2 else None
+    t3 = round(purchases[2][1] / 60000.0, 2) if len(purchases) >= 3 else None
+    return t1, t2, t3
 
 
 def _clamp(val: float, low: float = 0.0, high: float = 100.0) -> float:
@@ -109,7 +231,7 @@ def parse_riot_match(
     player_label: str = "",
 ) -> Optional[Dict[str, Any]]:
     """
-    Extrahiert aus dem offiziellen Riot Match-V5 JSON und Timeline JSON alle 39 normierten Metriken.
+    Extrahiert aus dem offiziellen Riot Match-V5 JSON und Timeline JSON alle 45 normierten Metriken.
     """
     info = match_json.get("info", {})
     metadata = match_json.get("metadata", {})
@@ -133,7 +255,7 @@ def parse_riot_match(
     my_team_id = me.get("teamId", 100)
     my_part_id = me.get("participantId", 1)
 
-    # Suche direkten Lane-Gegner (gleiche teamPosition im Gegnerteam)
+    # Suche direkten Lane-Gegner (gleiche teamPosition im Gegnerteam, mit Slot-Fallback)
     opponent = next(
         (
             p
@@ -142,25 +264,59 @@ def parse_riot_match(
         ),
         None,
     )
+    if opponent is None:
+        fallback_part_id = my_part_id + 5 if my_part_id <= 5 else my_part_id - 5
+        opponent = next(
+            (p for p in participants if p.get("participantId") == fallback_part_id),
+            None,
+        )
     opp_part_id = opponent.get("participantId") if opponent else None
 
-    # Laning-Differenzen @15 Min aus der Timeline berechnen
-    gold_diff_15 = 0.0
-    cs_diff_15 = 0.0
-    xp_diff_15 = 0.0
+    # Laning- & Midgame-Differenzen (@10, @15, @20, @25 Min) sowie Item-Kaufzeitpunkte aus der Timeline berechnen
+    gold_diff_10: Optional[float] = None
+    gold_diff_15: float = 0.0
+    gold_diff_20: Optional[float] = None
+    gold_diff_25: Optional[float] = None
+    cs_diff_15: float = 0.0
+    xp_diff_15: float = 0.0
+    item_1_time: Optional[float] = None
+    item_2_time: Optional[float] = None
+    item_3_time: Optional[float] = None
 
-    if timeline_json and opp_part_id:
+    if timeline_json:
         frames = timeline_json.get("info", {}).get("frames", [])
-        if len(frames) > 15:
-            p_frames = frames[15].get("participantFrames", {})
-            my_f = p_frames.get(str(my_part_id), {})
-            opp_f = p_frames.get(str(opp_part_id), {})
-            if my_f and opp_f:
-                gold_diff_15 = float(my_f.get("totalGold", 0) - opp_f.get("totalGold", 0))
-                my_cs_15 = my_f.get("minionsKilled", 0) + my_f.get("jungleMinionsKilled", 0)
-                opp_cs_15 = opp_f.get("minionsKilled", 0) + opp_f.get("jungleMinionsKilled", 0)
-                cs_diff_15 = float(my_cs_15 - opp_cs_15)
-                xp_diff_15 = float(my_f.get("xp", 0) - opp_f.get("xp", 0))
+        item_1_time, item_2_time, item_3_time = _extract_item_purchase_times(frames, my_part_id)
+
+        if opp_part_id:
+            def _gold_diff_at(minute: int) -> Optional[float]:
+                if len(frames) <= minute or game_duration < minute * 60 - 15:
+                    return None
+                fr = frames[minute]
+                if int(fr.get("timestamp", minute * 60000)) < minute * 60000 - 15000:
+                    return None
+                p_frames = fr.get("participantFrames", {})
+                my_f = p_frames.get(str(my_part_id), {})
+                opp_f = p_frames.get(str(opp_part_id), {})
+                if my_f and opp_f:
+                    return round(float(my_f.get("totalGold", 0) - opp_f.get("totalGold", 0)), 0)
+                return None
+
+            gold_diff_10 = _gold_diff_at(10)
+            gd15_val = _gold_diff_at(15)
+            if gd15_val is not None:
+                gold_diff_15 = gd15_val
+            gold_diff_20 = _gold_diff_at(20)
+            gold_diff_25 = _gold_diff_at(25)
+
+            if len(frames) > 15:
+                p_frames = frames[15].get("participantFrames", {})
+                my_f = p_frames.get(str(my_part_id), {})
+                opp_f = p_frames.get(str(opp_part_id), {})
+                if my_f and opp_f:
+                    my_cs_15 = my_f.get("minionsKilled", 0) + my_f.get("jungleMinionsKilled", 0)
+                    opp_cs_15 = opp_f.get("minionsKilled", 0) + opp_f.get("jungleMinionsKilled", 0)
+                    cs_diff_15 = float(my_cs_15 - opp_cs_15)
+                    xp_diff_15 = float(my_f.get("xp", 0) - opp_f.get("xp", 0))
 
     ch = me.get("challenges", {}) or {}
     kills = int(me.get("kills", 0))
@@ -192,7 +348,7 @@ def parse_riot_match(
         + float(ch.get("baronTakedowns", me.get("baronKills", 0)))
     )
 
-    metrics: Dict[str, float] = {
+    metrics: Dict[str, Any] = {
         "winrate": 100.0 if win else 0.0,
         "game_duration_min": round(game_minutes, 1),
         "kda": round((kills + assists) / max(1, deaths), 2),
@@ -224,7 +380,13 @@ def parse_riot_match(
             1,
         ),
         "gpm": round(float(ch.get("goldPerMinute", gold_earned / game_minutes)), 0),
+        "gold_diff_10": gold_diff_10,
         "gold_diff_15": round(gold_diff_15, 0),
+        "gold_diff_20": gold_diff_20,
+        "gold_diff_25": gold_diff_25,
+        "item_1_time": item_1_time,
+        "item_2_time": item_2_time,
+        "item_3_time": item_3_time,
         "cs_diff_15": round(cs_diff_15, 1),
         "xp_diff_15": round(xp_diff_15, 0),
         "turret_plates": float(ch.get("turretPlatesTaken", 0)),
@@ -286,6 +448,95 @@ def _riot_get(url: str, headers: Dict[str, str], timeout: int = 12) -> requests.
             continue
         return resp
     return resp
+
+
+def fetch_and_save_player_rank(puuid: str, region: str, api_key: str) -> Optional[int]:
+    """
+    Ruft den aktuellen Rang (Tier, Division, LP) über Riot League-V4 (by-puuid) ab,
+    speichert ihn in der `players`-Tabelle und aktualisiert die Rang-Kurve ('rank_lp') aller Spiele.
+    """
+    if not puuid or puuid == "DEMO_PUUID":
+        return None
+
+    platform = (region or "EUW1").strip().lower()
+    headers = {"X-Riot-Token": api_key.strip()}
+    url = f"https://{platform}.api.riotgames.com/lol/league/v4/entries/by-puuid/{puuid}"
+
+    solo_tier, solo_rank, solo_lp = "", "", 0
+    flex_tier, flex_rank, flex_lp = "", "", 0
+
+    try:
+        resp = _riot_get(url, headers=headers, timeout=10)
+        if resp.status_code == 200:
+            entries = resp.json()
+            for entry in entries:
+                q_type = entry.get("queueType", "")
+                if q_type == "RANKED_SOLO_5x5":
+                    solo_tier = entry.get("tier", "")
+                    solo_rank = entry.get("rank", "IV")
+                    solo_lp = int(entry.get("leaguePoints", 0))
+                elif q_type == "RANKED_FLEX_SR":
+                    flex_tier = entry.get("tier", "")
+                    flex_rank = entry.get("rank", "IV")
+                    flex_lp = int(entry.get("leaguePoints", 0))
+    except Exception:
+        pass
+
+    if solo_tier or flex_tier:
+        return update_player_rank(
+            puuid=puuid,
+            solo_tier=solo_tier,
+            solo_rank=solo_rank,
+            solo_lp=solo_lp,
+            flex_tier=flex_tier,
+            flex_rank=flex_rank,
+            flex_lp=flex_lp,
+        )
+
+    recompute_player_match_ranks(puuid)
+    return None
+
+
+def ensure_all_player_ranks() -> None:
+    """
+    Stellt beim Start sicher, dass alle gespeicherten Spieler ihren aktuellen Rang
+    und alle Spiele in der Datenbank das 'rank_lp'-Metrik-Feld besitzen.
+    """
+    settings = get_settings()
+    api_key = settings.get("api_key", "").strip()
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT puuid, region, solo_total_lp, flex_total_lp FROM players")
+    player_rows = cur.fetchall()
+    conn.close()
+
+    for p in player_rows:
+        puuid = p["puuid"]
+        region = p["region"] or "EUW1"
+        has_rank = p["solo_total_lp"] is not None or p["flex_total_lp"] is not None
+
+        if puuid == "DEMO_PUUID":
+            if not has_rank:
+                update_player_rank("DEMO_PUUID", solo_tier="PLATINUM", solo_rank="II", solo_lp=45)
+            continue
+
+        if not has_rank and api_key:
+            fetch_and_save_player_rank(puuid, region, api_key)
+        else:
+            # Prüfe, ob irgendein Spiel dieses Spielers noch kein 'rank_lp' hat
+            conn = get_connection()
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT metrics_json FROM matches WHERE puuid = ? ORDER BY game_creation DESC LIMIT 1",
+                (puuid,),
+            )
+            m_row = cur.fetchone()
+            conn.close()
+            if m_row:
+                m_dict = json.loads(m_row["metrics_json"] or "{}")
+                if "rank_lp" not in m_dict:
+                    recompute_player_match_ranks(puuid)
 
 
 def sync_riot_matches(
@@ -354,11 +605,18 @@ def sync_riot_matches(
             # Keine älteren Spiele mehr in dieser Queue bei Riot verfügbar
             break
 
-    # Prüfe, welche Matches für DIESEN Spieler (puuid) bereits in der Datenbank vorhanden sind
+    # Prüfe, welche Matches für DIESEN Spieler (puuid) bereits vollständig (inkl. neuer Timeline-Stats) vorhanden sind
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("SELECT match_id FROM matches WHERE puuid = ? AND is_demo = 0", (puuid,))
-    existing_ids = {r["match_id"] for r in cur.fetchall()}
+    cur.execute("SELECT match_id, metrics_json FROM matches WHERE puuid = ? AND is_demo = 0", (puuid,))
+    existing_ids = set()
+    for r in cur.fetchall():
+        try:
+            m_json = json.loads(r["metrics_json"] or "{}")
+            if "gold_diff_10" in m_json and "item_1_time" in m_json:
+                existing_ids.add(r["match_id"])
+        except Exception:
+            pass
     conn.close()
 
     imported = 0
@@ -383,6 +641,9 @@ def sync_riot_matches(
         if parsed:
             insert_match(parsed)
             imported += 1
+
+    # Aktualisiere Live-Rang über League-V4 und berechne die Rang-LP-Kurve über alle Spiele
+    fetch_and_save_player_rank(puuid, region.upper(), api_key)
 
     return {
         "puuid": puuid,
@@ -473,8 +734,42 @@ def generate_demo_matches(num_matches: int = 80) -> int:
         cs_at_10 = round(_clamp(cs_per_min * 10.0 * rng.uniform(0.88, 1.04), 38.0, 98.0), 1)
         gpm = round(_clamp(365.0 + 75.0 * progress + (45.0 if win else -25.0) + rng.gauss(0, 32.0), 260.0, 620.0), 0)
 
-        # Laning @15 Differenzen (verbessern sich von leicht negativ auf positiv)
-        gold_diff_15 = round(rng.gauss(-280.0 + 760.0 * progress + (260.0 if win else -220.0), 480.0), 0)
+        # Laning & Midgame Differenzen (@10, @15, @20, @25) sowie Item-Kaufzeitpunkte
+        gold_diff_10 = round(rng.gauss(-180.0 + 480.0 * progress + (160.0 if win else -140.0), 320.0), 0)
+        gold_diff_15 = round(gold_diff_10 * 1.15 + rng.gauss(-80.0 + 340.0 * progress + (140.0 if win else -120.0), 340.0), 0)
+        gold_diff_20: Optional[float] = (
+            round(gold_diff_15 * 1.25 + rng.gauss(-60.0 + 280.0 * progress + (220.0 if win else -190.0), 420.0), 0)
+            if game_minutes >= 20.0
+            else None
+        )
+        gold_diff_25: Optional[float] = (
+            round(
+                (gold_diff_20 if gold_diff_20 is not None else gold_diff_15) * 1.20
+                + rng.gauss(-50.0 + 260.0 * progress + (280.0 if win else -250.0), 520.0),
+                0,
+            )
+            if game_minutes >= 25.0
+            else None
+        )
+
+        # Item-Kaufzeitpunkte (1., 2., 3. Item in Minuten, sinken bei Fortschritt & höheren GPM)
+        item_1_raw = 12.6 - 1.5 * progress - (0.45 if win else -0.35) + rng.gauss(0, 0.75)
+        item_1_time: Optional[float] = round(_clamp(item_1_raw, 8.5, min(game_minutes - 0.5, 16.5)), 2)
+
+        item_2_raw = item_1_time + 7.4 - 0.9 * progress - (0.45 if win else -0.35) + rng.gauss(0, 0.95)
+        item_2_time: Optional[float] = (
+            round(_clamp(item_2_raw, item_1_time + 4.2, 26.5), 2)
+            if game_minutes >= item_2_raw + 0.3
+            else None
+        )
+
+        item_3_raw = (item_2_time or 19.5) + 6.9 - 0.8 * progress - (0.50 if win else -0.40) + rng.gauss(0, 1.1)
+        item_3_time: Optional[float] = (
+            round(_clamp(item_3_raw, (item_2_time or 19.5) + 4.0, 35.0), 2)
+            if item_2_time is not None and game_minutes >= item_3_raw + 0.3
+            else None
+        )
+
         cs_diff_15 = round(rng.gauss(-5.0 + 16.0 * progress + (5.0 if win else -4.0), 9.0), 1)
         xp_diff_15 = round(rng.gauss(-190.0 + 580.0 * progress + (190.0 if win else -160.0), 390.0), 0)
         turret_plates = float(max(0, int(round(rng.gauss(1.1 + 1.5 * progress, 1.1)))))
@@ -512,7 +807,7 @@ def generate_demo_matches(num_matches: int = 80) -> int:
         first_tower = 100.0 if rng.random() < (0.20 + 0.18 * progress) else 0.0
         epic_takedowns = float(max(0, int(round(rng.gauss(1.8 + 1.9 * progress, 1.2) * win_bonus))))
 
-        metrics: Dict[str, float] = {
+        metrics: Dict[str, Any] = {
             "winrate": 100.0 if win else 0.0,
             "game_duration_min": round(game_minutes, 1),
             "kda": kda,
@@ -533,7 +828,13 @@ def generate_demo_matches(num_matches: int = 80) -> int:
             "cs_per_min": cs_per_min,
             "cs_at_10": cs_at_10,
             "gpm": gpm,
+            "gold_diff_10": gold_diff_10,
             "gold_diff_15": gold_diff_15,
+            "gold_diff_20": gold_diff_20,
+            "gold_diff_25": gold_diff_25,
+            "item_1_time": item_1_time,
+            "item_2_time": item_2_time,
+            "item_3_time": item_3_time,
             "cs_diff_15": cs_diff_15,
             "xp_diff_15": xp_diff_15,
             "turret_plates": turret_plates,
@@ -571,4 +872,5 @@ def generate_demo_matches(num_matches: int = 80) -> int:
         insert_match(match_record)
 
     upsert_player("DEMO_PUUID", "DemoPlayer", "EUW", "EUW1")
+    update_player_rank("DEMO_PUUID", solo_tier="PLATINUM", solo_rank="II", solo_lp=45)
     return num_matches

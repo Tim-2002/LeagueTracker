@@ -42,6 +42,7 @@ const state = {
 };
 
 const DEFAULT_FAVORITES_LIST = [
+    "rank_lp",
     "winrate",
     "kda",
     "cs_per_min",
@@ -353,7 +354,8 @@ function populatePlayerDropdown() {
     players.forEach((p) => {
         const opt = document.createElement("option");
         opt.value = p.puuid;
-        opt.textContent = `${p.label} (${p.games} Sp. • ${p.winrate}% WR)`;
+        const rankSuffix = p.rank_label ? ` • ${p.rank_label}` : "";
+        opt.textContent = `${p.label}${rankSuffix} (${p.games} Sp. • ${p.winrate}% WR)`;
         playerSelect.appendChild(opt);
     });
 
@@ -484,7 +486,7 @@ function renderCategoryTabs() {
         })),
         {
             id: "all",
-            name: "Alle 39 Stats",
+            name: `Alle ${state.statsConfig.length} Stats`,
             icon: "📋",
             count: state.statsConfig.length,
             isFav: false,
@@ -703,8 +705,50 @@ function destroyAllCharts() {
     state.chartInstances = {};
 }
 
-function formatStatValue(val, cfg) {
-    if (val === undefined || val === null || Number.isNaN(val)) return "-";
+const TIER_NAMES_DE = ["Iron", "Bronze", "Silver", "Gold", "Platin", "Emerald", "Diamond"];
+const DIV_NAMES_DE = ["IV", "III", "II", "I"];
+
+function formatRankLp(val, isDiff = false, short = false) {
+    if (val === undefined || val === null || Number.isNaN(Number(val))) return "-";
+    const num = Math.round(Number(val));
+    if (isDiff) {
+        return `${num} LP`;
+    }
+    if (num >= 2800) {
+        const apexLp = num - 2800;
+        if (apexLp >= 1000) return short ? `Chall. ${apexLp} LP` : `Challenger (${apexLp} LP)`;
+        if (apexLp >= 500) return short ? `GM ${apexLp} LP` : `Grandmaster (${apexLp} LP)`;
+        return short ? `Master ${apexLp} LP` : `Master (${apexLp} LP)`;
+    }
+    const clamped = Math.max(0, num);
+    const tierIdx = Math.min(6, Math.floor(clamped / 400));
+    const rem = clamped % 400;
+    const divIdx = Math.min(3, Math.floor(rem / 100));
+    const lp = rem % 100;
+    const tName = TIER_NAMES_DE[tierIdx];
+    const dName = DIV_NAMES_DE[divIdx];
+    return short ? `${tName} ${dName} ${lp} LP` : `${tName} ${dName} (${lp} LP)`;
+}
+
+function formatMmSs(val, unit = "", isDiff = false) {
+    if (val === undefined || val === null || Number.isNaN(Number(val))) return "-";
+    const num = Number(val);
+    if (!isDiff && Math.abs(num) < 0.01) return "-";
+    const sign = num < -1e-6 ? "-" : "";
+    const totalSecs = Math.round(Math.abs(num) * 60);
+    const mins = Math.floor(totalSecs / 60);
+    const secs = totalSecs % 60;
+    return `${sign}${mins}:${String(secs).padStart(2, "0")}${unit}`;
+}
+
+function formatStatValue(val, cfg, isDiff = false) {
+    if (val === undefined || val === null || Number.isNaN(Number(val))) return "-";
+    if (cfg && cfg.format === "mm_ss") {
+        return formatMmSs(val, cfg.unit || "", isDiff);
+    }
+    if (cfg && cfg.format === "rank_lp") {
+        return formatRankLp(val, isDiff, false);
+    }
     const formatted = Number(val).toFixed(cfg.decimals);
     return `${formatted}${cfg.unit}`;
 }
@@ -772,7 +816,19 @@ function renderChartsGrid() {
         // Trend-Badge Formatierung
         let badgeClass = "neutral";
         let badgeText = "±0.0% Stabil";
-        if (st.is_improving === true) {
+        if (cfg.format === "rank_lp") {
+            const lpDiff = Math.round(st.delta_abs || 0);
+            const sign = lpDiff > 0 ? "+" : "";
+            if (st.is_improving === true) {
+                badgeClass = "positive";
+                badgeText = `▲ ${sign}${lpDiff} LP (Aufgestiegen)`;
+            } else if (st.is_improving === false) {
+                badgeClass = "negative";
+                badgeText = `▼ ${sign}${lpDiff} LP (Abgestiegen)`;
+            } else {
+                badgeText = `±0 LP Stabil`;
+            }
+        } else if (st.is_improving === true) {
             badgeClass = "positive";
             const arrow = st.delta_abs >= 0 ? "▲" : "▼";
             const sign = st.delta_pct > 0 ? "+" : "";
@@ -1069,6 +1125,15 @@ function createChartInstance(cfg, statSeries, bucketsMeta) {
                     ticks: {
                         color: "#94a3b8",
                         font: { size: 11 },
+                        callback: (val) => {
+                            if (cfg.format === "mm_ss") {
+                                return formatMmSs(val, "", true);
+                            }
+                            if (cfg.format === "rank_lp") {
+                                return formatRankLp(val, false, true);
+                            }
+                            return val;
+                        },
                     },
                 },
             },
@@ -1435,8 +1500,8 @@ function renderWinLossView(container) {
         const diffSign = it.diff_abs > 0 ? "+" : "";
         const pctSign = it.diff_pct > 0 ? "+" : "";
         const diffSummary = it.is_diff_metric
-            ? `${diffSign}${formatStatValue(it.diff_abs, it)} bei Sieg`
-            : `${diffSign}${formatStatValue(it.diff_abs, it)} (${pctSign}${it.diff_pct}% bei Sieg)`;
+            ? `${diffSign}${formatStatValue(it.diff_abs, it, true)} bei Sieg`
+            : `${diffSign}${formatStatValue(it.diff_abs, it, true)} (${pctSign}${it.diff_pct}% bei Sieg)`;
 
         const swingSign = it.winrate_swing > 0 ? "+" : "";
 
@@ -1676,6 +1741,7 @@ function renderCompareView(container) {
                     <span class="cmp-role-tag">🔵 Spieler A (Dein Fokus-Account)</span>
                     <select id="cmp-select-a" class="select-input">${optionsA}</select>
                     <div class="cmp-player-stats-line">
+                        ${pA.rank_label ? `<span>🏅 Rang: <strong>${pA.rank_label}</strong></span>` : ""}
                         <span>🎯 Ausgewählt: <strong>${pA.total_matches} Spiele</strong> (aus ${pA.matching_pool_count} passenden)</span>
                         <span>🏆 Winrate: <strong>${pA.winrate}%</strong> (${pA.wins_count}S / ${pA.losses_count}N)</span>
                         <span>⏱️ Ø Dauer: <strong>${pA.avg_duration}m</strong></span>
@@ -1692,6 +1758,7 @@ function renderCompareView(container) {
                     <span class="cmp-role-tag">🟡 Spieler B (Benchmark / Pro / Kumpel)</span>
                     <select id="cmp-select-b" class="select-input">${optionsB}</select>
                     <div class="cmp-player-stats-line">
+                        ${pB.rank_label ? `<span>🏅 Rang: <strong>${pB.rank_label}</strong></span>` : ""}
                         <span>🎯 Ausgewählt: <strong>${pB.total_matches} Spiele</strong> (aus ${pB.matching_pool_count} passenden)</span>
                         <span>🏆 Winrate: <strong>${pB.winrate}%</strong> (${pB.wins_count}S / ${pB.losses_count}N)</span>
                         <span>⏱️ Ø Dauer: <strong>${pB.avg_duration}m</strong></span>
@@ -1901,8 +1968,8 @@ function renderCompareView(container) {
         const diffSign = it.diff_abs > 0 ? "+" : "";
         const pctSign = it.diff_pct > 0 ? "+" : "";
         const diffSummary = it.is_diff_metric
-            ? `${diffSign}${formatStatValue(it.diff_abs, it)}`
-            : `${diffSign}${formatStatValue(it.diff_abs, it)} (${pctSign}${it.diff_pct}%)`;
+            ? `${diffSign}${formatStatValue(it.diff_abs, it, true)}`
+            : `${diffSign}${formatStatValue(it.diff_abs, it, true)} (${pctSign}${it.diff_pct}%)`;
 
         card.innerHTML = `
             <div class="card-header">
@@ -2030,6 +2097,12 @@ function createCompareChartInstance(it, pA, pB) {
                     bodyColor: "#e2e8f0",
                     borderColor: "#334155",
                     borderWidth: 1,
+                    callbacks: {
+                        label: (item) => {
+                            const yVal = item.parsed ? item.parsed.y : item.raw;
+                            return ` ${item.dataset.label}: ${formatStatValue(yVal, it)}`;
+                        },
+                    },
                 },
             },
             scales: {
@@ -2039,7 +2112,19 @@ function createCompareChartInstance(it, pA, pB) {
                 },
                 y: {
                     grid: { color: "rgba(51, 65, 85, 0.25)" },
-                    ticks: { color: "#94a3b8", font: { size: 10.5 } },
+                    ticks: {
+                        color: "#94a3b8",
+                        font: { size: 10.5 },
+                        callback: (val) => {
+                            if (it.format === "mm_ss") {
+                                return formatMmSs(val, "", true);
+                            }
+                            if (it.format === "rank_lp") {
+                                return formatRankLp(val, false, true);
+                            }
+                            return val;
+                        },
+                    },
                 },
             },
         },

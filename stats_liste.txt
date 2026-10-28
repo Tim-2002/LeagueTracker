@@ -1,9 +1,10 @@
-# LeagueTracker - Kuratierte Liste der Zeitverlaufs-Statistiken (39 Trend-Metriken)
+# LeagueTracker - Kuratierte Liste der Zeitverlaufs-Statistiken (46 Trend-Metriken)
 # Alle spielzeitabhängigen Werte sind auf "pro Minute", "Team-Anteil in %" oder
 # feste Zeitpunkte in der Laning-Phase (@10 / @15 Min.) normiert, damit die
 # Spieldauer deine Fortschrittskurve über viele Spiele nicht verfälscht.
 
 [1. Gesamt-Scores (0-100 Index) & Erfolg]
+- Rang & Liga-Punkte / LP (rank_lp: League-V4 Tier, Division & LP + Match-V5 Win/Loss-Verlauf von Iron bis Challenger)
 - Kampf-Score / Fighting Index 0-100 (score_fighting: KDA, KP%, DPM, Solo-Kills)
 - Farm-Score / Farming Index 0-100 (score_farming: CS/Min, GPM, CS@10, Gold-Diff@15)
 - Sicht-Score / Vision Index 0-100 (score_vision: Vision/Min, Control Wards, Cleared Wards)
@@ -31,11 +32,17 @@
 - Heilung & Schilde für Verbündete pro Minute (ally_heal_shield_per_min: (totalHealsOnTeammates + totalDamageShieldedOnTeammates) / Spieldauer)
 - Crowd Control Zeit an Gegnern in Sek./Min. (cc_per_min: timeCCingOthers / Spieldauer)
 
-[4. Farm (CS), Gold & Laning-Phase (@10 / @15 Min.)]
+[4. Farm (CS), Gold, Items & Laning-Phase (@10 / @15 / @20 / @25 Min.)]
 - CS pro Minute (cs_per_min: (totalMinionsKilled + neutralMinionsKilled) / Spieldauer)
 - CS bei Minute 10 (cs_at_10: challenges.laneMinionsFirst10Minutes + challenges.jungleCsBefore10Minutes)
 - Gold pro Minute / GPM (gpm: challenges.goldPerMinute)
+- Gold-Differenz zum Lane-Gegner @10 Min. (gold_diff_10: Timeline Frame 10 totalGold Differenz)
 - Gold-Differenz zum Lane-Gegner @15 Min. (gold_diff_15: Timeline Frame 15 totalGold Differenz)
+- Gold-Differenz zum Lane-Gegner @20 Min. (gold_diff_20: Timeline Frame 20 totalGold Differenz)
+- Gold-Differenz zum Lane-Gegner @25 Min. (gold_diff_25: Timeline Frame 25 totalGold Differenz)
+- 1. Item Kaufzeitpunkt [Min:Sek, früher = besser] (item_1_time: Timeline ITEM_PURCHASED 1. fertiges Item)
+- 2. Item Kaufzeitpunkt [Min:Sek, früher = besser] (item_2_time: Timeline ITEM_PURCHASED 2. fertiges Item)
+- 3. Item Kaufzeitpunkt [Min:Sek, früher = besser] (item_3_time: Timeline ITEM_PURCHASED 3. fertiges Item)
 - CS-Differenz zum Lane-Gegner @15 Min. (cs_diff_15: Timeline Frame 15 minionsKilled Differenz)
 - XP-Differenz zum Lane-Gegner @15 Min. (xp_diff_15: Timeline Frame 15 xp Differenz)
 - Zerstörte Turm-Platten / Turret Plates (turret_plates: challenges.turretPlatesTaken)

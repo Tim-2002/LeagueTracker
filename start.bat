@@ -23,7 +23,7 @@ if %errorlevel% neq 0 (
     )
 )
 
-echo Starte LeagueTracker Server auf http://127.0.0.1:8000 ...
-start "" http://127.0.0.1:8000
+echo Starte LeagueTracker Server auf http://127.0.0.1:8001 ...
+start "" http://127.0.0.1:8001
 python backend\app.py
 pause

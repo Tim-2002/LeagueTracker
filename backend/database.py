@@ -14,6 +14,60 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "leaguetracker.db")
 
+TIER_BASE_LP: Dict[str, int] = {
+    "IRON": 0,
+    "BRONZE": 400,
+    "SILVER": 800,
+    "GOLD": 1200,
+    "PLATINUM": 1600,
+    "EMERALD": 2000,
+    "DIAMOND": 2400,
+    "MASTER": 2800,
+    "GRANDMASTER": 2800,
+    "CHALLENGER": 2800,
+}
+
+DIVISION_OFFSET_LP: Dict[str, int] = {
+    "IV": 0,
+    "III": 100,
+    "II": 200,
+    "I": 300,
+}
+
+TIER_DISPLAY_NAMES = ["Iron", "Bronze", "Silver", "Gold", "Platin", "Emerald", "Diamond"]
+DIVISION_DISPLAY_NAMES = ["IV", "III", "II", "I"]
+
+
+def tier_to_total_lp(tier: str, division: str, lp: int) -> int:
+    t_up = (tier or "").strip().upper()
+    d_up = (division or "IV").strip().upper()
+    if t_up not in TIER_BASE_LP:
+        return 1200
+    base = TIER_BASE_LP[t_up]
+    if t_up in ("MASTER", "GRANDMASTER", "CHALLENGER"):
+        return base + max(0, int(lp))
+    return base + DIVISION_OFFSET_LP.get(d_up, 0) + max(0, min(99, int(lp)))
+
+
+def format_rank_lp(total_lp: float, short: bool = False) -> str:
+    val = int(round(float(total_lp)))
+    if val >= 2800:
+        apex_lp = val - 2800
+        if apex_lp >= 1000:
+            return f"Chall. {apex_lp} LP" if short else f"Challenger ({apex_lp} LP)"
+        if apex_lp >= 500:
+            return f"GM {apex_lp} LP" if short else f"Grandmaster ({apex_lp} LP)"
+        return f"Master {apex_lp} LP" if short else f"Master ({apex_lp} LP)"
+
+    clamped = max(0, val)
+    tier_idx = min(6, clamped // 400)
+    rem = clamped % 400
+    div_idx = min(3, rem // 100)
+    lp = rem % 100
+    t_name = TIER_DISPLAY_NAMES[tier_idx]
+    d_name = DIVISION_DISPLAY_NAMES[div_idx]
+    return f"{t_name} {d_name} {lp} LP" if short else f"{t_name} {d_name} ({lp} LP)"
+
 
 def get_connection() -> sqlite3.Connection:
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -33,10 +87,35 @@ def init_db() -> None:
             game_name TEXT NOT NULL,
             tag_line TEXT NOT NULL,
             region TEXT NOT NULL,
-            last_synced INTEGER DEFAULT 0
+            last_synced INTEGER DEFAULT 0,
+            solo_tier TEXT DEFAULT '',
+            solo_rank TEXT DEFAULT '',
+            solo_lp INTEGER DEFAULT 0,
+            solo_total_lp INTEGER DEFAULT NULL,
+            flex_tier TEXT DEFAULT '',
+            flex_rank TEXT DEFAULT '',
+            flex_lp INTEGER DEFAULT 0,
+            flex_total_lp INTEGER DEFAULT NULL,
+            rank_label TEXT DEFAULT ''
         )
         """
     )
+
+    cur.execute("PRAGMA table_info(players)")
+    player_cols = {r["name"] for r in cur.fetchall()}
+    for col_name, col_def in [
+        ("solo_tier", "TEXT DEFAULT ''"),
+        ("solo_rank", "TEXT DEFAULT ''"),
+        ("solo_lp", "INTEGER DEFAULT 0"),
+        ("solo_total_lp", "INTEGER DEFAULT NULL"),
+        ("flex_tier", "TEXT DEFAULT ''"),
+        ("flex_rank", "TEXT DEFAULT ''"),
+        ("flex_lp", "INTEGER DEFAULT 0"),
+        ("flex_total_lp", "INTEGER DEFAULT NULL"),
+        ("rank_label", "TEXT DEFAULT ''"),
+    ]:
+        if col_name not in player_cols:
+            cur.execute(f"ALTER TABLE players ADD COLUMN {col_name} {col_def}")
 
     cur.execute(
         """
@@ -171,6 +250,12 @@ def init_db() -> None:
                     "INSERT OR IGNORE INTO favorites (stat_id, sort_order) VALUES (?, ?)",
                     (stat_id, idx),
                 )
+    else:
+        # Stelle sicher, dass der neue Rang-Stat ('rank_lp') ebenfalls in bestehenden Favoriten-Listen erscheint
+        cur.execute("SELECT stat_id FROM favorites WHERE stat_id = 'rank_lp'")
+        if cur.fetchone() is None and "rank_lp" in STATS_BY_ID:
+            cur.execute("UPDATE favorites SET sort_order = sort_order + 1")
+            cur.execute("INSERT INTO favorites (stat_id, sort_order) VALUES ('rank_lp', 0)")
 
     conn.commit()
     conn.close()
@@ -260,8 +345,13 @@ def upsert_player(puuid: str, game_name: str, tag_line: str, region: str) -> Non
     label = f"{game_name.strip()}#{tag_line.strip().lstrip('#')}"
     cur.execute(
         """
-        INSERT OR REPLACE INTO players (puuid, game_name, tag_line, region, last_synced)
+        INSERT INTO players (puuid, game_name, tag_line, region, last_synced)
         VALUES (?, ?, ?, ?, strftime('%s','now'))
+        ON CONFLICT(puuid) DO UPDATE SET
+            game_name = excluded.game_name,
+            tag_line = excluded.tag_line,
+            region = excluded.region,
+            last_synced = excluded.last_synced
         """,
         (puuid, game_name.strip(), tag_line.strip().lstrip("#"), region.strip().upper()),
     )
@@ -271,6 +361,109 @@ def upsert_player(puuid: str, game_name: str, tag_line: str, region: str) -> Non
     )
     conn.commit()
     conn.close()
+
+
+def recompute_player_match_ranks(puuid: str, current_total_lp: Optional[int] = None) -> None:
+    """
+    Berechnet und speichert für alle Spiele eines Spielers den Rang-LP-Wert ('rank_lp')
+    in chronologischer Reihenfolge rückwärts ausgehend vom aktuellen Live-Rang (League-V4).
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    if current_total_lp is None:
+        cur.execute("SELECT solo_total_lp, flex_total_lp FROM players WHERE puuid = ?", (puuid,))
+        p_row = cur.fetchone()
+        if p_row:
+            current_total_lp = (
+                p_row["solo_total_lp"]
+                if p_row["solo_total_lp"] is not None
+                else p_row["flex_total_lp"]
+            )
+    if current_total_lp is None:
+        current_total_lp = 1600  # Fallback Platin IV 0 LP
+
+    cur.execute(
+        "SELECT match_id, queue_id, win, metrics_json FROM matches WHERE puuid = ? ORDER BY game_creation ASC",
+        (puuid,),
+    )
+    rows = cur.fetchall()
+    if not rows:
+        conn.close()
+        return
+
+    lp = int(current_total_lp)
+    updates = []
+    for i in range(len(rows) - 1, -1, -1):
+        r = rows[i]
+        m_dict = json.loads(r["metrics_json"] or "{}")
+        m_dict["rank_lp"] = float(lp)
+        updates.append((json.dumps(m_dict), r["match_id"], puuid))
+
+        qid = int(r["queue_id"])
+        win = int(r["win"])
+        if qid in (420, 440):
+            sf = float(m_dict.get("score_fighting", 50.0))
+            perf = max(-2, min(2, int(round((sf - 50.0) / 20.0))))
+            delta = (21 + perf) if win == 1 else (-21 + perf)
+            lp = max(0, lp - delta)
+
+    cur.executemany(
+        "UPDATE matches SET metrics_json = ? WHERE match_id = ? AND puuid = ?",
+        updates,
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_player_rank(
+    puuid: str,
+    solo_tier: str = "",
+    solo_rank: str = "",
+    solo_lp: int = 0,
+    flex_tier: str = "",
+    flex_rank: str = "",
+    flex_lp: int = 0,
+) -> Optional[int]:
+    conn = get_connection()
+    cur = conn.cursor()
+
+    solo_total: Optional[int] = (
+        tier_to_total_lp(solo_tier, solo_rank, solo_lp) if solo_tier else None
+    )
+    flex_total: Optional[int] = (
+        tier_to_total_lp(flex_tier, flex_rank, flex_lp) if flex_tier else None
+    )
+    active_total = solo_total if solo_total is not None else flex_total
+    label = format_rank_lp(active_total) if active_total is not None else ""
+
+    cur.execute(
+        """
+        UPDATE players
+        SET solo_tier = ?, solo_rank = ?, solo_lp = ?, solo_total_lp = ?,
+            flex_tier = ?, flex_rank = ?, flex_lp = ?, flex_total_lp = ?,
+            rank_label = ?
+        WHERE puuid = ?
+        """,
+        (
+            solo_tier,
+            solo_rank,
+            int(solo_lp),
+            solo_total,
+            flex_tier,
+            flex_rank,
+            int(flex_lp),
+            flex_total,
+            label,
+            puuid,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    if active_total is not None:
+        recompute_player_match_ranks(puuid, current_total_lp=active_total)
+    return active_total
 
 
 def insert_match(match_record: Dict[str, Any]) -> None:
@@ -338,6 +531,8 @@ def get_available_filters(puuid: Optional[str] = None) -> Dict[str, Any]:
             p.game_name,
             p.tag_line,
             p.region,
+            p.rank_label,
+            p.solo_total_lp,
             COUNT(*) as games,
             SUM(m.win) as wins,
             MAX(m.is_demo) as is_demo
@@ -382,6 +577,8 @@ def get_available_filters(puuid: Optional[str] = None) -> Dict[str, Any]:
                 "game_name": g_name,
                 "tag_line": t_line,
                 "region": reg,
+                "rank_label": r["rank_label"] or "",
+                "solo_total_lp": r["solo_total_lp"],
                 "games": games_cnt,
                 "winrate": wr,
                 "is_demo": bool(r["is_demo"]),
@@ -512,9 +709,9 @@ def _compute_win_loss_analysis(parsed_matches: List[Dict[str, Any]]) -> Dict[str
         decimals = stat_cfg["decimals"]
         higher_is_better = stat_cfg["higher_is_better"]
 
-        win_vals = [float(m["metrics"].get(sid, 0.0)) for m in win_matches]
-        loss_vals = [float(m["metrics"].get(sid, 0.0)) for m in loss_matches]
-        all_vals = [float(m["metrics"].get(sid, 0.0)) for m in parsed_matches]
+        win_vals = [float(m["metrics"][sid]) for m in win_matches if m["metrics"].get(sid) is not None]
+        loss_vals = [float(m["metrics"][sid]) for m in loss_matches if m["metrics"].get(sid) is not None]
+        all_vals = [float(m["metrics"][sid]) for m in parsed_matches if m["metrics"].get(sid) is not None]
 
         if sid == "kda":
             w_k = sum(m["kills"] for m in win_matches)
@@ -532,19 +729,19 @@ def _compute_win_loss_analysis(parsed_matches: List[Dict[str, Any]]) -> Dict[str
             a_a = sum(m["assists"] for m in parsed_matches)
             overall_avg = (a_k + a_a) / max(1, a_d)
         else:
-            win_avg = sum(win_vals) / wins_count
-            loss_avg = sum(loss_vals) / losses_count
-            overall_avg = sum(all_vals) / total
+            win_avg = sum(win_vals) / len(win_vals) if win_vals else 0.0
+            loss_avg = sum(loss_vals) / len(loss_vals) if loss_vals else 0.0
+            overall_avg = sum(all_vals) / len(all_vals) if all_vals else 0.0
 
         # Berechne gepoolte Standardabweichung & Cohen's d
-        w_mean = sum(win_vals) / wins_count
-        l_mean = sum(loss_vals) / losses_count
+        w_mean = sum(win_vals) / len(win_vals) if win_vals else 0.0
+        l_mean = sum(loss_vals) / len(loss_vals) if loss_vals else 0.0
         w_var = sum((x - w_mean) ** 2 for x in win_vals)
         l_var = sum((x - l_mean) ** 2 for x in loss_vals)
-        dof = max(1, wins_count + losses_count - 2)
+        dof = max(1, len(win_vals) + len(loss_vals) - 2)
         s_pooled = math.sqrt((w_var + l_var) / dof)
 
-        if s_pooled > 1e-9:
+        if s_pooled > 1e-9 and win_vals and loss_vals:
             d_raw = (w_mean - l_mean) / s_pooled
         else:
             d_raw = 0.0
@@ -566,7 +763,15 @@ def _compute_win_loss_analysis(parsed_matches: List[Dict[str, Any]]) -> Dict[str
             impact_label = "➖ Kaum Unterschied"
 
         diff_abs = round(win_avg - loss_avg, decimals)
-        is_diff_metric = sid in ("gold_diff_15", "cs_diff_15", "xp_diff_15", "vision_diff_opponent")
+        is_diff_metric = sid in (
+            "gold_diff_10",
+            "gold_diff_15",
+            "gold_diff_20",
+            "gold_diff_25",
+            "cs_diff_15",
+            "xp_diff_15",
+            "vision_diff_opponent",
+        )
 
         if not is_diff_metric and abs(loss_avg) > 1e-6:
             diff_pct = round(((win_avg - loss_avg) / abs(loss_avg)) * 100, 1)
@@ -582,9 +787,16 @@ def _compute_win_loss_analysis(parsed_matches: List[Dict[str, Any]]) -> Dict[str
 
         # Schwellenwert / Sweetspot-Analyse (Winrate über vs. unter Durchschnitt/Median)
         sorted_all = sorted(all_vals)
-        median_val = sorted_all[len(sorted_all) // 2]
+        median_val = sorted_all[len(sorted_all) // 2] if sorted_all else 0.0
         raw_threshold = (overall_avg + median_val) / 2.0
-        if decimals == 0 or sid in (
+        if stat_cfg.get("format") == "mm_ss":
+            threshold = round(raw_threshold, decimals)
+            total_secs = int(round(abs(threshold) * 60))
+            thresh_str = f"{total_secs // 60}:{total_secs % 60:02d}{stat_cfg['unit']}"
+        elif stat_cfg.get("format") == "rank_lp":
+            threshold = float(round(raw_threshold))
+            thresh_str = format_rank_lp(threshold, short=True)
+        elif decimals == 0 or sid in (
             "deaths_per_game",
             "kills_per_game",
             "assists_per_game",
@@ -599,16 +811,17 @@ def _compute_win_loss_analysis(parsed_matches: List[Dict[str, Any]]) -> Dict[str
             threshold = round(raw_threshold, decimals)
             thresh_str = f"{threshold:.{decimals}f}{stat_cfg['unit']}"
 
+        valid_matches = [m for m in parsed_matches if m["metrics"].get(sid) is not None]
         if higher_is_better is False:
-            # Weniger ist besser (z.B. Tode pro Spiel)
-            good_matches = [m for m in parsed_matches if float(m["metrics"].get(sid, 0.0)) <= threshold]
-            bad_matches = [m for m in parsed_matches if float(m["metrics"].get(sid, 0.0)) > threshold]
+            # Weniger ist besser (z.B. Tode pro Spiel oder früherer Item-Kaufzeitpunkt)
+            good_matches = [m for m in valid_matches if float(m["metrics"][sid]) <= threshold]
+            bad_matches = [m for m in valid_matches if float(m["metrics"][sid]) > threshold]
             good_cond_label = f"≤ {thresh_str}"
             bad_cond_label = f"> {thresh_str}"
         else:
             # Mehr ist besser
-            good_matches = [m for m in parsed_matches if float(m["metrics"].get(sid, 0.0)) >= threshold]
-            bad_matches = [m for m in parsed_matches if float(m["metrics"].get(sid, 0.0)) < threshold]
+            good_matches = [m for m in valid_matches if float(m["metrics"][sid]) >= threshold]
+            bad_matches = [m for m in valid_matches if float(m["metrics"][sid]) < threshold]
             good_cond_label = f"≥ {thresh_str}"
             bad_cond_label = f"< {thresh_str}"
 
@@ -624,7 +837,7 @@ def _compute_win_loss_analysis(parsed_matches: List[Dict[str, Any]]) -> Dict[str
             if bad_games > 0
             else overall_wr
         )
-        wr_swing = round(good_wr - bad_wr, 1)
+        wr_swing = round(good_wr - bad_wr, 1) if (good_games > 0 and bad_games > 0) else 0.0
 
         items.append(
             {
@@ -633,6 +846,7 @@ def _compute_win_loss_analysis(parsed_matches: List[Dict[str, Any]]) -> Dict[str
                 "category": stat_cfg["category"],
                 "unit": stat_cfg["unit"],
                 "decimals": decimals,
+                "format": stat_cfg.get("format"),
                 "higher_is_better": higher_is_better,
                 "is_diff_metric": is_diff_metric,
                 "color": stat_cfg["color"],
@@ -919,34 +1133,47 @@ def compute_timeseries(
             }
         )
 
-    # Berechne Zeitreihen und Trend-Indikatoren für alle 39 Stats
+    # Berechne Zeitreihen und Trend-Indikatoren für alle 45 Stats
     stats_result: Dict[str, Any] = {}
     for stat_cfg in STATS_CONFIG:
         sid = stat_cfg["id"]
         decimals = stat_cfg["decimals"]
         higher_is_better = stat_cfg["higher_is_better"]
 
-        series_values: List[float] = []
-        for bucket in buckets:
-            if sid == "kda" and len(bucket) > 1:
-                total_k = sum(m["kills"] for m in bucket)
-                total_d = sum(m["deaths"] for m in bucket)
-                total_a = sum(m["assists"] for m in bucket)
-                val = (total_k + total_a) / max(1, total_d)
-            else:
-                vals = [float(m["metrics"].get(sid, 0.0)) for m in bucket]
-                val = sum(vals) / len(vals) if vals else 0.0
-            series_values.append(round(val, decimals))
-
-        # Gesamtdurchschnitt über alle gefilterten Einzelspiele
+        # Gesamtdurchschnitt über alle gefilterten Einzelspiele mit gültigem Messwert
         if sid == "kda":
             all_k = sum(m["kills"] for m in parsed_matches)
             all_d = sum(m["deaths"] for m in parsed_matches)
             all_a = sum(m["assists"] for m in parsed_matches)
             overall_avg = round((all_k + all_a) / max(1, all_d), decimals)
         else:
-            all_vals = [float(m["metrics"].get(sid, 0.0)) for m in parsed_matches]
+            all_vals = [float(m["metrics"][sid]) for m in parsed_matches if m["metrics"].get(sid) is not None]
             overall_avg = round(sum(all_vals) / len(all_vals), decimals) if all_vals else 0.0
+
+        series_values: List[float] = []
+        last_valid_val: float = overall_avg
+        for bucket in buckets:
+            if sid == "kda" and len(bucket) > 1:
+                total_k = sum(m["kills"] for m in bucket)
+                total_d = sum(m["deaths"] for m in bucket)
+                total_a = sum(m["assists"] for m in bucket)
+                val = (total_k + total_a) / max(1, total_d)
+                last_valid_val = val
+            elif sid == "rank_lp":
+                vals = [float(m["metrics"][sid]) for m in bucket if m["metrics"].get(sid) is not None]
+                if vals:
+                    val = vals[-1]
+                    last_valid_val = val
+                else:
+                    val = last_valid_val
+            else:
+                vals = [float(m["metrics"][sid]) for m in bucket if m["metrics"].get(sid) is not None]
+                if vals:
+                    val = sum(vals) / len(vals)
+                    last_valid_val = val
+                else:
+                    val = last_valid_val
+            series_values.append(round(val, decimals))
 
         # Trendberechnung: Vergleich der ersten Hälfte (oder bisherigen Spiele) mit dem aktuellen Ende
         trend_line = [round(v, decimals) for v in _linear_regression(series_values)]
@@ -1148,23 +1375,31 @@ def compare_players(
             sid = stat_cfg["id"]
             decimals = stat_cfg["decimals"]
             higher_is_better = stat_cfg["higher_is_better"]
-            is_diff_metric = sid in ("gold_diff_15", "cs_diff_15", "xp_diff_15", "vision_diff_opponent")
+            is_diff_metric = sid in (
+                "gold_diff_10",
+                "gold_diff_15",
+                "gold_diff_20",
+                "gold_diff_25",
+                "cs_diff_15",
+                "xp_diff_15",
+                "vision_diff_opponent",
+            )
 
             st_a = ts_a["stats"].get(sid, {})
             st_b = ts_b["stats"].get(sid, {})
             avg_a = float(st_a.get("overall_avg", 0.0))
             avg_b = float(st_b.get("overall_avg", 0.0))
 
-            vals_a = [float(m["metrics"].get(sid, 0.0)) for m in matches_a]
-            vals_b = [float(m["metrics"].get(sid, 0.0)) for m in matches_b]
-            mean_a = sum(vals_a) / len(vals_a)
-            mean_b = sum(vals_b) / len(vals_b)
+            vals_a = [float(m["metrics"][sid]) for m in matches_a if m["metrics"].get(sid) is not None]
+            vals_b = [float(m["metrics"][sid]) for m in matches_b if m["metrics"].get(sid) is not None]
+            mean_a = sum(vals_a) / len(vals_a) if vals_a else 0.0
+            mean_b = sum(vals_b) / len(vals_b) if vals_b else 0.0
             var_a = sum((x - mean_a) ** 2 for x in vals_a)
             var_b = sum((x - mean_b) ** 2 for x in vals_b)
             dof = max(1, len(vals_a) + len(vals_b) - 2)
             s_pooled = math.sqrt((var_a + var_b) / dof)
 
-            if s_pooled > 1e-9:
+            if s_pooled > 1e-9 and vals_a and vals_b:
                 d_raw = (avg_a - avg_b) / s_pooled
             else:
                 d_raw = 0.0
@@ -1197,6 +1432,7 @@ def compare_players(
                     "category": stat_cfg["category"],
                     "unit": stat_cfg["unit"],
                     "decimals": decimals,
+                    "format": stat_cfg.get("format"),
                     "higher_is_better": higher_is_better,
                     "is_diff_metric": is_diff_metric,
                     "color": stat_cfg["color"],
@@ -1223,6 +1459,7 @@ def compare_players(
         "player_a": {
             "puuid": puuid_a,
             "label": info_a.get("label", "Spieler A"),
+            "rank_label": info_a.get("rank_label", ""),
             "total_matches": ts_a["total_matches"],
             "matching_pool_count": ts_a["matching_pool_count"],
             "wins_count": ts_a["wins_count"],
@@ -1235,6 +1472,7 @@ def compare_players(
         "player_b": {
             "puuid": puuid_b,
             "label": info_b.get("label", "Spieler B"),
+            "rank_label": info_b.get("rank_label", ""),
             "total_matches": ts_b["total_matches"],
             "matching_pool_count": ts_b["matching_pool_count"],
             "wins_count": ts_b["wins_count"],
